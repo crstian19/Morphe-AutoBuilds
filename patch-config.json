@@ -1,23 +1,8 @@
 {
   "patch_list": [
     { "app_name": "youtube", "source": "morphe" },
-    { "app_name": "youtube-music", "source": "morphe" },
-    { "app_name": "reddit", "source": "morphe" },
-    { "app_name": "instagram", "source": "piko" },
-    { "app_name": "pinterest", "source": "adobo" },
-    { "app_name": "soundcloud", "source": "Hoo" },
-    { "app_name": "lyfta", "source": "Hoo" },
-    { "app_name": "camscanner", "source": "Hoo" },
-    { "app_name": "macrofactor", "source": "Hoo" },
-    { "app_name": "macrofactor-workout", "source": "Hoo" },
-    { "app_name": "mirinae", "source": "Hoo" },
-    { "app_name": "niagara", "source": "Hoo" },
-    { "app_name": "pydroid", "source": "Hoo" },
-    { "app_name": "snorelab", "source": "Hoo" },
-    { "app_name": "ventusky", "source": "Hoo" },
-    { "app_name": "xodo", "source": "Hoo" },
-    { "app_name": "xrecorder", "source": "Hoo" },
     { "app_name": "google-photos", "source": "rookie" },
-    { "app_name": "prime-video", "source": "Hoo" }
+    { "app_name": "prime-video", "source": "Hoo" },
+    { "app_name": "twitch", "source": "rookie" }
   ]
 }

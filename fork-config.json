@@ -9,24 +9,11 @@
   ],
   "apps": [
     "youtube",
-    "youtube-music",
-    "reddit",
-    "instagram",
-    "pinterest",
-    "soundcloud",
-    "lyfta",
-    "camscanner",
-    "macrofactor",
-    "macrofactor-workout",
-    "mirinae",
-    "niagara",
-    "pydroid",
-    "snorelab",
-    "ventusky",
-    "xodo",
-    "xrecorder",
+    "prime-video",
     "google-photos",
-    "prime-video"
+    "twitch"
   ],
-  "source_overrides": {}
+  "source_overrides": {
+    "twitch": "rookie"
+  }
 }
