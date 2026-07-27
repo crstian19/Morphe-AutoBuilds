@@ -1,0 +1,116 @@
+name: Sync Upstream
+
+# Keeps this fork in sync with RookieEnough/Morphe-AutoBuilds.
+#
+# patch-config.json is owned by upstream: the merge always takes upstream's copy
+# and scripts/apply_fork_config.py filters it back down to the apps listed in
+# fork-config.json. Any other conflict fails the job on purpose so it gets a human.
+#
+# Requires a secret named SYNC_PAT: a PAT (classic: 'repo' + 'workflow' scope, or a
+# fine-grained token with Contents + Workflows write). The default GITHUB_TOKEN
+# cannot push changes under .github/workflows/, which upstream syncs regularly touch.
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/RookieEnough/Morphe-AutoBuilds.git
+  UPSTREAM_BRANCH: main
+
+jobs:
+  sync:
+    name: Merge upstream into main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_PAT || github.token }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "$UPSTREAM_REPO" 2>/dev/null || git remote set-url upstream "$UPSTREAM_REPO"
+          git fetch upstream "$UPSTREAM_BRANCH"
+
+      - name: Check whether there is anything to merge
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count HEAD.."upstream/$UPSTREAM_BRANCH")
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "Already up to date with upstream/$UPSTREAM_BRANCH"
+          else
+            echo "$BEHIND new upstream commit(s) to merge"
+          fi
+
+      - name: Merge upstream
+        if: steps.check.outputs.behind != '0'
+        run: |
+          if git merge "upstream/$UPSTREAM_BRANCH" --no-edit; then
+            echo "Merged cleanly"
+            exit 0
+          fi
+
+          CONFLICTS=$(git diff --name-only --diff-filter=U)
+          echo "Conflicting files:"
+          echo "$CONFLICTS"
+
+          # patch-config.json is regenerated below, so upstream's copy always wins.
+          UNEXPECTED=$(echo "$CONFLICTS" | grep -v '^patch-config\.json$' || true)
+          if [ -n "$UNEXPECTED" ]; then
+            echo "::error::Unexpected merge conflicts, aborting. Resolve them manually:"
+            echo "$UNEXPECTED"
+            git merge --abort
+            exit 1
+          fi
+
+          git checkout --theirs patch-config.json
+          git add patch-config.json
+          git commit --no-edit
+
+      - name: Re-apply fork app selection
+        if: steps.check.outputs.behind != '0'
+        run: |
+          python3 scripts/apply_fork_config.py
+          if ! git diff --quiet patch-config.json; then
+            git add patch-config.json
+            git commit -m "chore(fork): re-apply app selection from fork-config.json"
+          fi
+
+      - name: Push
+        if: steps.check.outputs.behind != '0'
+        env:
+          HAS_PAT: ${{ secrets.SYNC_PAT != '' }}
+        run: |
+          if [ "$HAS_PAT" != "true" ] && ! git diff --quiet origin/main -- .github/workflows; then
+            echo "::error::This sync changes .github/workflows/ and no SYNC_PAT secret is set."
+            echo "::error::GITHUB_TOKEN cannot push workflow changes. Add a SYNC_PAT secret with the 'workflow' scope."
+            exit 1
+          fi
+          git push origin main
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Upstream sync"
+            echo ""
+            echo "- Upstream commits behind before run: ${{ steps.check.outputs.behind || 'n/a' }}"
+            echo "- HEAD: $(git rev-parse --short HEAD) $(git log -1 --pretty=%s)"
+          } >> "$GITHUB_STEP_SUMMARY"
