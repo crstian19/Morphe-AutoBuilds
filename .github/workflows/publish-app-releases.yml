@@ -1,0 +1,54 @@
+name: Publish Per-App Releases
+
+# Fork-only workflow. Mirrors each app's APKs from the shared 'latest' release into
+# its own release tagged '{app}-v{version}', so Obtainium can detect updates from
+# the tag instead of re-downloading everything whenever the 'latest' title changes.
+#
+# Runs after every build (success or failure: a partially failed build still
+# publishes the apps that did work) and is safe to re-run — existing tags are skipped.
+
+on:
+  workflow_run:
+    workflows: ["Auto Build and Release Morphe"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: "Per-app releases to retain"
+        type: string
+        required: false
+        default: "3"
+      dry_run:
+        description: "Only report what would be published"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-app-releases
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Mirror APKs into per-app releases
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo '### Per-app releases' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          python3 scripts/publish_app_releases.py \
+            --keep "${{ inputs.keep || '3' }}" \
+            ${{ inputs.dry_run == true && '--dry-run' || '' }} \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
