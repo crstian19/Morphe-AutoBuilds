@@ -12,11 +12,38 @@ Usage:
 """
 import json
 import os
+import subprocess
 import sys
+import urllib.request
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FORK_CONFIG = os.path.join(REPO_ROOT, 'fork-config.json')
 PATCH_CONFIG = os.path.join(REPO_ROOT, 'patch-config.json')
+
+UPSTREAM_REF = 'upstream/main'
+UPSTREAM_RAW = 'https://raw.githubusercontent.com/RookieEnough/Morphe-AutoBuilds/main/patch-config.json'
+
+
+def load_upstream_catalog():
+    """Fetch upstream's full patch_list: the local file is already filtered down.
+
+    Tries the fetched upstream remote first so it works offline, then the raw URL.
+    Returns None if neither is reachable.
+    """
+    try:
+        raw = subprocess.check_output(
+            ['git', 'show', f'{UPSTREAM_REF}:patch-config.json'],
+            cwd=REPO_ROOT, stderr=subprocess.DEVNULL, text=True)
+        return json.loads(raw).get('patch_list', [])
+    except (subprocess.CalledProcessError, OSError, ValueError):
+        pass
+
+    try:
+        with urllib.request.urlopen(UPSTREAM_RAW, timeout=20) as resp:
+            return json.loads(resp.read().decode()).get('patch_list', [])
+    except Exception as exc:  # noqa: BLE001 - any failure means "no catalog"
+        print(f'WARNING: could not read upstream patch-config.json ({exc})')
+        return None
 
 
 def build_patch_list(patch_list, selected, overrides):
@@ -74,8 +101,15 @@ def main():
         print("ERROR: fork-config.json has an empty 'apps' list; refusing to wipe patch-config.json")
         return 1
 
+    # Upstream owns the catalog; fall back to the local (already filtered) file
+    # only when upstream is unreachable, in which case new apps cannot be resolved.
+    catalog = load_upstream_catalog()
+    if catalog is None:
+        print('WARNING: falling back to the local patch-config.json as catalog')
+        catalog = patch_config.get('patch_list', [])
+
     patch_list = build_patch_list(
-        patch_config.get('patch_list', []),
+        catalog,
         selected,
         fork_config.get('source_overrides') or {},
     )
