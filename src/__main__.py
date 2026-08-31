@@ -1,6 +1,8 @@
 import json
 import logging
 import re
+import os
+import shutil
 from sys import exit
 from pathlib import Path
 from os import getenv
@@ -161,65 +163,80 @@ def run_build(app_name: str, source: str, arch: str = "universal") -> str:
 
         # --- Normalize/merge input into .apk when needed ---
         if input_apk.suffix != ".apk":
-            logging.warning("Input file is not .apk, using APKEditor to merge")
-            apk_editor = downloader.download_apkeditor()
+            # Check if it is a split bundle (contains multiple .apk files or is .apkm/.xapk/.apks)
+            is_bundle = False
+            try:
+                import zipfile
+                if zipfile.is_zipfile(input_apk):
+                    with zipfile.ZipFile(input_apk, "r") as z:
+                        namelist = z.namelist()
+                        has_split_apks = any(n.endswith(".apk") for n in namelist)
+                        is_bundle = has_split_apks or input_apk.suffix.lower() in [".apkm", ".xapk", ".apks", ".zip"]
+            except Exception as e:
+                logging.debug(f"Zip inspection failed for {input_apk}: {e}")
 
-            merged_apk = input_apk.with_suffix(".apk")
+            target_apk = input_apk.with_name(f"{input_apk.stem}.apk" if not input_apk.name.endswith(".apk") else input_apk.name)
 
-            utils.run_process([
-                "java", "-jar", apk_editor, "m",
-                "-i", str(input_apk),
-                "-o", str(merged_apk)
-            ], silent=True)
+            if is_bundle:
+                logging.info(f"Input file is a bundle ({input_apk.name}), using APKEditor to merge")
+                apk_editor = downloader.download_apkeditor()
+                merged_apk = input_apk.with_suffix(".apk")
+                merged_apk.unlink(missing_ok=True)
 
-            input_apk.unlink(missing_ok=True)
+                try:
+                    utils.run_process([
+                        "java", "-jar", str(apk_editor), "m",
+                        "-f",
+                        "-i", str(input_apk),
+                        "-o", str(merged_apk)
+                    ], silent=True, check=True)
+                    input_apk.unlink(missing_ok=True)
+                    input_apk = merged_apk
+                except Exception as e:
+                    logging.warning(f"APKEditor merge failed ({e}); checking if file can be used as standalone APK")
+                    if input_apk.exists():
+                        target_apk.unlink(missing_ok=True)
+                        os.replace(input_apk, target_apk)
+                        input_apk = target_apk
+            else:
+                logging.info(f"Normalizing standalone APK filename to {target_apk.name}")
+                if input_apk != target_apk:
+                    target_apk.unlink(missing_ok=True)
+                    os.replace(input_apk, target_apk)
+                    input_apk = target_apk
 
-            if not merged_apk.exists():
-                logging.error("Merged APK file not found")
-                raise RuntimeError("Merged APK file not found")
+            if not input_apk.exists():
+                logging.error("Processed APK file not found")
+                raise RuntimeError("Processed APK file not found")
 
             # Clean up filename: remove build number like (1575420) and -1575420.
             # Only strip 6+ digit build-number tokens so legitimate short version
             # segments (e.g. "app-2_0") are not mangled.
-            clean_name = re.sub(r'\(\d+\)', '', merged_apk.name)  # Remove (1575420)
+            clean_name = re.sub(r'\(\d+\)', '', input_apk.name)  # Remove (1575420)
             clean_name = re.sub(r'-\d{6,}_', '_', clean_name)  # Remove -1575420_ -> _
-            if clean_name != merged_apk.name:
-                clean_apk = merged_apk.with_name(clean_name)
-                merged_apk.rename(clean_apk)
-                merged_apk = clean_apk
+            if clean_name != input_apk.name:
+                clean_apk = input_apk.with_name(clean_name)
+                clean_apk.unlink(missing_ok=True)
+                os.replace(input_apk, clean_apk)
+                input_apk = clean_apk
 
-            input_apk = merged_apk
-            logging.info(f"Merged APK file generated: {input_apk}")
+            logging.info(f"Normalized APK file: {input_apk}")
 
         # --- ARCHITECTURE-SPECIFIC PROCESSING ---
         if arch != "universal":
             logging.info(f"Processing APK for {arch} architecture...")
             if arch == "arm64-v8a":
-                utils.run_process([
-                    "zip", "--delete", str(input_apk),
-                    "lib/x86/*", "lib/x86_64/*", "lib/armeabi-v7a/*"
-                ], silent=True, check=False)
+                utils.strip_zip_entries(input_apk, ["lib/x86/*", "lib/x86_64/*", "lib/armeabi-v7a/*"])
             elif arch == "armeabi-v7a":
-                utils.run_process([
-                    "zip", "--delete", str(input_apk),
-                    "lib/x86/*", "lib/x86_64/*", "lib/arm64-v8a/*"
-                ], silent=True, check=False)
+                utils.strip_zip_entries(input_apk, ["lib/x86/*", "lib/x86_64/*", "lib/arm64-v8a/*"])
         else:
-            utils.run_process([
-                "zip", "--delete", str(input_apk),
-                "lib/x86/*", "lib/x86_64/*"
-            ], silent=True, check=False)
+            utils.strip_zip_entries(input_apk, ["lib/x86/*", "lib/x86_64/*"])
 
-        # FIX: Repair corrupted APK (e.g. from Uptodown) ONLY when integrity check fails.
-        # Previously this ran on every build and could silently alter healthy APKs.
+        # Validate APK integrity
         logging.info("Checking APK integrity...")
-        try:
-            integrity = subprocess.run(
-                ["zip", "-T", str(input_apk)],
-                check=False, capture_output=True, text=True,
-            )
-            if integrity.returncode != 0:
-                logging.warning(f"APK integrity check failed; attempting repair: {integrity.stdout.strip()}")
+        if not utils.check_apk_integrity(input_apk):
+            logging.warning("APK integrity check failed; attempting repair with zip -FF if available")
+            if shutil.which("zip"):
                 fixed_apk = Path(f"{app_name}-fixed-v{version}.apk")
                 subprocess.run([
                     "zip", "-FF", str(input_apk), "--out", str(fixed_apk)
@@ -232,9 +249,9 @@ def run_build(app_name: str, source: str, arch: str = "universal") -> str:
                 else:
                     logging.warning("Repair produced no usable file; keeping original APK")
             else:
-                logging.info("APK integrity OK; no repair needed")
-        except Exception as e:
-            logging.warning(f"Could not check/fix APK: {e}")
+                logging.warning("zip command not available for repair; proceeding with current APK")
+        else:
+            logging.info("APK integrity OK; no repair needed")
 
         # Include architecture in output filename
         output_apk = Path(f"{app_name}-{arch}-patch-v{version}.apk")
@@ -243,34 +260,13 @@ def run_build(app_name: str, source: str, arch: str = "universal") -> str:
             # USE DIFFERENT COMMANDS BASED ON SOURCE TYPE
             if is_morphe:
                 logging.info("🔧 Using Morphe patching system...")
-                patch_error: subprocess.CalledProcessError | None = None
-                try:
-                    morphe_cmd = [
-                        "java", "-jar", str(cli),
-                        "patch", "--patches", str(patches),
-                        "--out", str(output_apk), str(input_apk),
-                        *exclude_patches, *include_patches
-                    ]
-                    utils.run_process(morphe_cmd, capture=True, stream=True)
-                except subprocess.CalledProcessError as e:
-                    # Remember the original failure so the retry logic below can
-                    # decide whether to fall back to an older version. We still
-                    # try the alternative argument format as a best-effort.
-                    patch_error = e
-                    logging.info("Trying alternative Morphe command format...")
-                    morphe_cmd = [
-                        "java", "-jar", str(cli),
-                        "--patches", str(patches),
-                        "--input", str(input_apk),
-                        "--output", str(output_apk)
-                    ]
-                    try:
-                        utils.run_process(morphe_cmd, capture=True, stream=True)
-                    except subprocess.CalledProcessError as e2:
-                        raise e2 from e
-                if patch_error is not None:
-                    # Fallback path succeeded; clear the error so we don't retry.
-                    patch_error = None
+                morphe_cmd = [
+                    "java", "-jar", str(cli),
+                    "patch", "--patches", str(patches),
+                    "--out", str(output_apk), str(input_apk),
+                    *exclude_patches, *include_patches
+                ]
+                utils.run_process(morphe_cmd, capture=True, stream=True)
             else:
                 logging.info("🔧 Using ReVanced patching system...")
                 cli_name = Path(cli).name.lower()

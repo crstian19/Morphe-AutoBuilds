@@ -1,3 +1,4 @@
+import re
 import logging
 from src import session, utils
 from bs4 import BeautifulSoup
@@ -12,22 +13,27 @@ def get_latest_version(app_name: str, config: dict) -> str:
         url = f"https://{uptodown_name}.en.uptodown.com/android/versions"
         try:
             response = session.get(url)
-            if response.status_code == 200:
+            # Avoid category page redirects
+            if response.status_code == 200 and not any(response.url.endswith(cat) for cat in ['/personalization', '/general-android', '/sports', '/education-languages', '/multimedia', '/tools', '/lifestyle', '/communication']):
                 content_size = len(response.content)
-                logging.info(f"✓ Found: {response.url}")
                 soup = BeautifulSoup(response.content, "html.parser")
                 version_spans = soup.select('#versions-items-list .version')
-                versions = [span.text for span in version_spans]
+                versions = [span.text.strip() for span in version_spans if span.text.strip()]
                 
                 if versions:
-                    highest_version = max(versions)
-                    logging.info(f"Found version {highest_version} for {app_name}")
+                    highest_version = versions[0]
+                    logging.info(f"✓ Found version {highest_version} for {app_name} on {response.url}")
                     return highest_version
+                
+                # Check main page
+                ver_tag = soup.find("div", class_="version") or soup.find(attrs={"itemprop": "softwareVersion"})
+                if ver_tag and ver_tag.text.strip():
+                    v = ver_tag.text.strip()
+                    logging.info(f"✓ Found main page version {v} for {app_name} on {response.url}")
+                    return v
             elif response.status_code == 404:
                 logging.debug(f"✗ Not found: {url}")
                 continue
-            else:
-                response.raise_for_status()
         except Exception as e:
             logging.debug(f"Failed for {url}: {str(e)[:50]}...")
             continue
@@ -64,7 +70,21 @@ def get_download_link(version: str, app_name: str, config: dict) -> str:
                     break
                     
                 for entry in version_data:
-                    if entry["version"] == version:
+                    entry_ver = entry.get("version", "").strip()
+                    clean_target = re.sub(r'[\(\[].*?[\)\]]', '', version).strip()
+                    clean_entry = re.sub(r'[\(\[].*?[\)\]]', '', entry_ver).strip()
+                    target_norm = utils.normalize_version(version)
+                    entry_norm = utils.normalize_version(entry_ver)
+
+                    is_match = (
+                        entry_ver == version
+                        or clean_entry == clean_target
+                        or clean_entry == version
+                        or entry_ver == clean_target
+                        or (entry_norm and target_norm and entry_norm == target_norm)
+                    )
+
+                    if is_match:
                         version_url_parts = entry["versionURL"]
                         version_url = f"{version_url_parts['url']}/{version_url_parts['extraURL']}/{version_url_parts['versionID']}"
                         version_page = session.get(version_url)
@@ -88,11 +108,13 @@ def get_download_link(version: str, app_name: str, config: dict) -> str:
                             return f"https://dw.uptodown.com/dwn/{download_url}"
                 
                 # Stop paginating once we've scrolled past the target version.
-                # Use numeric comparison (not lexicographic) so version boundaries
-                # like 9.x -> 10.x are handled correctly.
                 target_norm = utils.normalize_version(version)
-                if all(utils.normalize_version(entry["version"]) < target_norm
-                       for entry in version_data):
+                if target_norm and all(
+                    utils.normalize_version(entry.get("version", "")) and utils.normalize_version(entry.get("version", "")) < target_norm
+                    for entry in version_data
+                ):
+                    break
+                if page >= 10:
                     break
                 page += 1
         except Exception as e:
