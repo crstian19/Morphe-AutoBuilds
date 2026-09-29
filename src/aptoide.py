@@ -82,12 +82,14 @@ def get_download_link(version: str, app_name: str, config: Dict) -> Optional[str
             except (KeyError, TypeError):
                 continue
 
-    # Fallback to latest trusted version of THIS package if specific version not found
-    pinned = (config.get("version") or "").strip()
-    if not vercode and not pinned and items:
+    # Only fall back to Aptoide's latest when no specific version was requested.
+    # Silently substituting a different version for a requested one produces
+    # APKs the patches were never made for (and mislabels the output), so a
+    # miss here must return None and let the next source try.
+    if not vercode and (not version or version.lower() == "latest") and items:
         try:
             vercode = items[0]["file"]["vercode"]
-            logging.info(f"Using nearest Aptoide version {items[0]['file']['vername']} for {package}")
+            logging.info(f"Using latest Aptoide version {items[0]['file']['vername']} for {package}")
         except (KeyError, TypeError):
             pass
 

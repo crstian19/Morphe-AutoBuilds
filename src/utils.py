@@ -4,6 +4,7 @@ import re
 import shutil
 import time
 import logging
+import zipfile
 from typing import List, Optional
 from github.GithubException import BadCredentialsException
 from src import gh
@@ -595,3 +596,49 @@ def check_apk_integrity(apk_path: Path) -> bool:
         return True
     except Exception:
         return False
+
+
+def ensure_usable_apk(apk_path: Path, app_name: str, version: str) -> Path | None:
+    """Return ``apk_path`` if it passes the integrity check.
+
+    Otherwise attempt a ``zip -FF`` repair and re-check.  A file that is
+    still corrupt afterwards is deleted and ``None`` is returned so the
+    caller can try another download source instead of feeding a broken
+    APK to the patcher (which crashes with an obscure NPE).
+    """
+    if check_apk_integrity(apk_path):
+        return apk_path
+
+    logging.warning(f"APK integrity check failed for {apk_path.name}; attempting repair with zip -FF")
+    if not shutil.which("zip"):
+        logging.warning("zip command not available for repair")
+        apk_path.unlink(missing_ok=True)
+        return None
+
+    fixed_apk = apk_path.with_name(f"{app_name}-fixed-v{version}.apk")
+    fixed_apk.unlink(missing_ok=True)
+    try:
+        subprocess.run(
+            ["zip", "-FF", str(apk_path), "--out", str(fixed_apk)],
+            check=False, capture_output=True, timeout=120,
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        logging.warning("zip -FF repair timed out; discarding download")
+        apk_path.unlink(missing_ok=True)
+        fixed_apk.unlink(missing_ok=True)
+        return None
+    if not (fixed_apk.exists() and fixed_apk.stat().st_size > 0):
+        logging.warning("Repair produced no usable file; discarding download")
+        apk_path.unlink(missing_ok=True)
+        return None
+
+    apk_path.unlink(missing_ok=True)
+    fixed_apk.rename(apk_path)
+    if check_apk_integrity(apk_path):
+        logging.info("APK repaired successfully and passes integrity check")
+        return apk_path
+
+    logging.warning("APK still fails integrity check after zip -FF repair; discarding download")
+    apk_path.unlink(missing_ok=True)
+    return None

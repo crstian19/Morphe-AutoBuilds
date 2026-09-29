@@ -2,7 +2,6 @@ import json
 import logging
 import re
 import os
-import shutil
 from sys import exit
 from pathlib import Path
 from os import getenv
@@ -116,10 +115,18 @@ def run_build(app_name: str, source: str, arch: str = "universal") -> str:
     candidates: list[str] = []
     used_method = None
     for method in download_methods:
-        input_apk, version, candidates = method(app_name, str(cli), str(patches), arch)
-        if input_apk:
-            used_method = method
-            break
+        apk_path, ver, cands = method(app_name, str(cli), str(patches), arch)
+        if not apk_path:
+            continue
+        # A corrupt download must never reach the patcher: repair it, and if
+        # it is still unusable, discard it and try the next source.
+        apk_path = utils.ensure_usable_apk(apk_path, app_name, ver or "")
+        if apk_path is None:
+            logging.warning(f"Discarding unusable download from {method.__name__}; trying next source")
+            continue
+        input_apk, version, candidates = apk_path, ver, cands
+        used_method = method
+        break
 
     if input_apk is None or not used_method or not version:
         logging.error(f"❌ Failed to download APK for {app_name}")
@@ -159,6 +166,10 @@ def run_build(app_name: str, source: str, arch: str = "universal") -> str:
 
             input_apk, version, _ = used_method(app_name, str(cli), str(patches), arch, override_version=ver)
             if input_apk is None:
+                continue
+            input_apk = utils.ensure_usable_apk(input_apk, app_name, ver)
+            if input_apk is None:
+                logging.warning(f"Re-downloaded APK for {ver} is unusable; trying next version")
                 continue
             version = ver
 
@@ -233,26 +244,13 @@ def run_build(app_name: str, source: str, arch: str = "universal") -> str:
         else:
             utils.strip_zip_entries(input_apk, ["lib/x86/*", "lib/x86_64/*"])
 
-        # Validate APK integrity
+        # Validate APK integrity (safety net: downloads were already validated,
+        # but bundle merging / arch stripping can corrupt the file).
         logging.info("Checking APK integrity...")
-        if not utils.check_apk_integrity(input_apk):
-            logging.warning("APK integrity check failed; attempting repair with zip -FF if available")
-            if shutil.which("zip"):
-                fixed_apk = Path(f"{app_name}-fixed-v{version}.apk")
-                subprocess.run([
-                    "zip", "-FF", str(input_apk), "--out", str(fixed_apk)
-                ], check=False, capture_output=True)
-
-                if fixed_apk.exists() and fixed_apk.stat().st_size > 0:
-                    input_apk.unlink(missing_ok=True)
-                    fixed_apk.rename(input_apk)
-                    logging.info("APK fixed successfully")
-                else:
-                    logging.warning("Repair produced no usable file; keeping original APK")
-            else:
-                logging.warning("zip command not available for repair; proceeding with current APK")
-        else:
-            logging.info("APK integrity OK; no repair needed")
+        input_apk = utils.ensure_usable_apk(input_apk, app_name, version or "")
+        if input_apk is None:
+            logging.error(f"APK for {app_name} v{version} is corrupt and could not be repaired; trying next version")
+            continue
 
         # Include architecture in output filename
         output_apk = Path(f"{app_name}-{arch}-patch-v{version}.apk")
