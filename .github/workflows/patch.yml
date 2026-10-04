@@ -413,22 +413,26 @@ jobs:
           if [ "${{ steps.check-release.outputs.release_exists }}" = "true" ]; then
             echo "⬆️ Uploading rebuilt assets in place and refreshing release metadata..."
 
-            # Delete superseded older-version APKs. The previous loop only deleted
-            # assets whose filename EXACTLY matched a new APK; since APK names
-            # embed the version, old versions (e.g. v2.4.0) never matched the new
-            # v2.5.0 and accumulated forever. cleanup_old_apks.py deletes any
-            # release APK sharing a {app}-{arch}- identity prefix with a new APK
-            # but with a different version.
+            # Upload new APKs and manifest FIRST, then delete superseded old
+            # versions. This order guarantees we never lose both: if the upload
+            # fails, the old APK is still there; if cleanup fails, the job
+            # fails loudly with a duplicate instead of silently losing the old.
+            gh release upload latest "${ASSETS[@]}" --clobber
+
+            # Delete superseded older-version APKs. APK names embed the version,
+            # so the old versions (e.g. v2.4.0) never matched the new v2.5.0 and
+            # would accumulate forever without this. cleanup_old_apks.py deletes
+            # any release APK sharing a {app}-{arch}- identity prefix with a new
+            # APK but with a different version.
             : > keep_apks.txt
             for apk in ./release-apks/*.apk; do
               [ -f "$apk" ] || continue
               basename "$apk" >> keep_apks.txt
             done
-            python scripts/cleanup_old_apks.py --release latest --keep-file keep_apks.txt || \
-              echo "⚠️  cleanup_old_apks.py failed; continuing with exact-name cleanup"
+            python scripts/cleanup_old_apks.py --release latest --keep-file keep_apks.txt
+            # NB: no `||` fallback here. If cleanup fails, the job must fail
+            # loudly instead of silently accumulating superseded APKs.
 
-            # Upload new APKs and manifest
-            gh release upload latest "${ASSETS[@]}" --clobber
             gh release edit latest \
               --title "Morphe APKs - $(date +'%Y-%m-%d %H:%M')" \
               --notes-file release_notes.md

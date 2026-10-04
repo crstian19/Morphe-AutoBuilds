@@ -60,15 +60,9 @@ jobs:
             config_file="$dir/${{ inputs.app_name }}.json"
             if [ -f "$config_file" ]; then
               echo "Updating $config_file with version ${{ inputs.version }}"
-              # Update JSON with specific version
-              python -c "
-              import json, sys, os
-              with open('$config_file', 'r') as f:
-                  config = json.load(f)
-              config['version'] = '${{ inputs.version }}'
-              with open('$config_file', 'w') as f:
-                  json.dump(config, f, indent=2)
-              "
+              # Update JSON with specific version (single line to avoid
+              # indentation issues inside python -c)
+              python3 -c "import json; p='$config_file'; c=json.load(open(p)); c['version']='${{ inputs.version }}'; json.dump(c, open(p, 'w'), indent=2)"
               echo "Updated: $config_file"
               break
             fi
@@ -193,7 +187,14 @@ jobs:
           if [ "${{ steps.check-release.outputs.release_exists }}" == "true" ]; then
             echo "⬆️ Uploading new assets (clobbering existing)..."
 
-            # Delete superseded older-version APKs for this app/arch before upload.
+            # Upload FIRST, then delete superseded old versions. This order
+            # guarantees we never lose both: if the upload fails, the old APK
+            # is still there; if cleanup fails, the job fails loudly with a
+            # duplicate instead of silently losing the old.
+            # --clobber overwrites the file if it exists, adds it if it doesn't
+            gh release upload latest *.apk --clobber
+
+            # Delete superseded older-version APKs for this app/arch after upload.
             # --clobber only overwrites exact filenames; since APK names embed the
             # version, the old version (e.g. v2.4.0) would otherwise remain next
             # to the new v2.5.0. cleanup_old_apks.py removes any release APK that
@@ -204,11 +205,9 @@ jobs:
               [ -f "$apk" ] || continue
               echo "$apk" >> keep_apks.txt
             done
-            python scripts/cleanup_old_apks.py --release latest --keep-file keep_apks.txt || \
-              echo "⚠️  cleanup_old_apks.py failed; continuing with clobber upload"
-
-            # --clobber overwrites the file if it exists, adds it if it doesn't
-            gh release upload latest *.apk --clobber
+            python scripts/cleanup_old_apks.py --release latest --keep-file keep_apks.txt
+            # NB: no `||` fallback here. If cleanup fails, the job must fail
+            # loudly instead of silently accumulating superseded APKs.
 
             echo "📝 Updating release title and notes..."
             gh release edit latest \
@@ -247,13 +246,6 @@ jobs:
             config_file="$dir/${{ inputs.app_name }}.json"
             if [ -f "$config_file" ]; then
               echo "Resetting version in $config_file"
-              python -c "
-              import json, sys, os
-              with open('$config_file', 'r') as f:
-                  config = json.load(f)
-              config['version'] = ''
-              with open('$config_file', 'w') as f:
-                  json.dump(config, f, indent=2)
-              "
+              python3 -c "import json; p='$config_file'; c=json.load(open(p)); c['version']=''; json.dump(c, open(p, 'w'), indent=2)"
             fi
           done

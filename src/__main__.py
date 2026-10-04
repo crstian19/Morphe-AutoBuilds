@@ -151,7 +151,18 @@ def run_build(app_name: str, source: str, arch: str = "universal") -> str:
                 if line.startswith('-'):
                     exclude_patches.extend(["-d", line[1:].strip()])
                 elif line.startswith('+'):
-                    include_patches.extend(["-e", line[1:].strip()])
+                    # Inline patch options: + Patch name {key=value, key2=value2}
+                    # become: -e "Patch name" -Okey=value -Okey2=value2
+                    name_opts = line[1:].strip()
+                    opts: list[str] = []
+                    if "{" in name_opts and name_opts.rstrip().endswith("}"):
+                        name_part, opts_part = name_opts.split("{", 1)
+                        name_opts = name_part.strip()
+                        for opt in opts_part.rstrip("}").split(","):
+                            opt = opt.strip()
+                            if opt:
+                                opts.append(f"-O{opt}")
+                    include_patches.extend(["-e", name_opts, *opts])
 
     for attempt_idx, ver in enumerate(versions_to_try):
         if attempt_idx > 0:

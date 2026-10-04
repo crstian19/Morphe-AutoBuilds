@@ -197,7 +197,18 @@ def get_highest_version(versions: list[str]) -> str | None:
             highest_version = v
     return highest_version
 
-def get_supported_versions(package_name: str, cli: str, patches: str) -> list[str]:
+def get_supported_versions(package_name: str, cli: str, patches: str) -> Optional[list[str]]:
+    """Return the app versions the patch bundle declares compatibility with.
+
+    Returns:
+        list[str]: specific compatible versions, highest first. The caller must
+            build one of these and must NOT fall back to the store's latest.
+        []: the CLI query succeeded but no specific versions were declared
+            (patches are version-agnostic); building latest is safe.
+        None: the CLI query itself failed, so patch compatibility is unknown.
+            The caller must NOT build; guessing latest risks shipping a build
+            with silently skipped patches.
+    """
     # Morphe CLI and ReVanced CLI have different list-versions syntax
     cli_name = Path(cli).name.lower()
     is_morphe_cli = 'morphe' in cli_name
@@ -238,7 +249,7 @@ def get_supported_versions(package_name: str, cli: str, patches: str) -> list[st
 
     if not output:
         logging.warning("No output returned from list-versions command")
-        return []
+        return None
 
     lines = output.splitlines()
     logging.info(f"CLI raw output lines: {lines}")
@@ -247,7 +258,7 @@ def get_supported_versions(package_name: str, cli: str, patches: str) -> list[st
     first_line = lines[0].strip().lower()
     if 'usage:' in first_line or 'unmatched argument' in first_line or 'error' in first_line:
         logging.warning(f"CLI returned error/usage output, cannot determine version")
-        return []
+        return None
 
     if len(lines) <= 2:
         logging.warning("Output has no version lines")
@@ -305,7 +316,10 @@ def get_supported_versions(package_name: str, cli: str, patches: str) -> list[st
 
 
 def get_supported_version(package_name: str, cli: str, patches: str) -> Optional[str]:
-    """Backwards compatible helper: returns the highest compatible version, if any."""
+    """Backwards compatible helper: returns the highest compatible version, if any.
+
+    Returns None when the CLI query fails OR when patches are version-agnostic.
+    """
     versions = get_supported_versions(package_name, cli, patches)
     return versions[0] if versions else None
 
