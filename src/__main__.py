@@ -105,10 +105,16 @@ def run_build(app_name: str, source: str, arch: str = "universal") -> str:
         downloader.download_apkmirror,
         downloader.download_aptoide,
         downloader.download_github,
+        downloader.download_codeberg,
         downloader.download_uptodown,
         downloader.download_apkpure,
         downloader.download_apkcombo,
     ]
+
+    # Facebook: Codeberg only. No mirror fallbacks, fail if Codeberg fails.
+    if app_name == "facebook":
+        download_methods = [downloader.download_codeberg]
+        logging.info("Facebook: using Codeberg only (no mirror fallbacks)")
 
     input_apk = None
     version = None

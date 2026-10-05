@@ -673,7 +673,24 @@ def _get_repo_owner_name() -> Optional[Tuple[str, str]]:
     return owner, name
 
 
+def _is_gitlab() -> bool:
+    """True when running on the GitLab mirror CI (MORPHE_PLATFORM=gitlab)."""
+    return os.environ.get("MORPHE_PLATFORM") == "gitlab"
+
+
 def fetch_existing_manifest() -> Optional[dict]:
+    if _is_gitlab():
+        from src import gitlab_api
+        dest = gitlab_api.download_package_file(MANIFEST_NAME, MANIFEST_NAME)
+        if dest is None:
+            logging.info(f"No existing '{MANIFEST_NAME}' on GitLab release '{RELEASE_TAG}'")
+            return None
+        try:
+            with open(dest, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logging.warning(f"Bad manifest.json: {e}")
+            return None
     rc, _, err = run_gh(["release", "download", RELEASE_TAG,
                          "--pattern", MANIFEST_NAME, "--clobber"])
     if rc != 0:
@@ -689,6 +706,14 @@ def fetch_existing_manifest() -> Optional[dict]:
 
 
 def fetch_existing_apk_names() -> List[str]:
+    if _is_gitlab():
+        from src import gitlab_api
+        try:
+            links = gitlab_api.list_asset_links(RELEASE_TAG)
+        except Exception as e:
+            logging.info(f"No GitLab release '{RELEASE_TAG}' yet ({e})")
+            return []
+        return [l.get("name", "") for l in links if l.get("name", "").endswith(".apk")]
     repo = _get_repo_owner_name()
     if repo:
         owner, name = repo

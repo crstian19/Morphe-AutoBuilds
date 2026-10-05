@@ -262,6 +262,15 @@ def download_github(
 ) -> tuple[Path | None, str | None, list[str]]:
     return download_platform(app_name, "github", cli, patches, arch, override_version)
 
+def download_codeberg(
+    app_name: str,
+    cli: str,
+    patches: str,
+    arch: str = None,
+    override_version: str = None,
+) -> tuple[Path | None, str | None, list[str]]:
+    return download_platform(app_name, "codeberg", cli, patches, arch, override_version)
+
 def download_apkpure(
     app_name: str,
     cli: str,
