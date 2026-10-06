@@ -21,7 +21,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src import gitlab_api
+import importlib.util as _ilu
+def _load_gitlab_api():
+    _spec = _ilu.spec_from_file_location(
+        "gitlab_api", Path(__file__).resolve().parent.parent / "src" / "gitlab_api.py")
+    _mod = _ilu.module_from_spec(_spec)
+    sys.modules["gitlab_api"] = _mod
+    _spec.loader.exec_module(_mod)
+    return _mod
+gitlab_api = _load_gitlab_api()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
                     datefmt="%Y-%m-%d %H:%M:%S")
@@ -112,6 +120,14 @@ def main() -> int:
             logging.info(f"Deleting superseded asset: {name}")
             gitlab_api.delete_asset_link(args.tag, link["id"])
             gitlab_api.delete_package_file(name)
+
+    if args.merge:
+        # Refresh release notes from the final asset set: merge mode otherwise
+        # preserves the old notes, which would list stale filenames.
+        final_names = [l["name"] for l in gitlab_api.list_asset_links(args.tag)]
+        if final_names:
+            mtitle, mnotes = build_release_notes(final_names)
+            gitlab_api.ensure_release(args.tag, mtitle, mnotes, ref)
 
     logging.info("GitLab release publish complete.")
     return 0

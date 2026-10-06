@@ -31,9 +31,9 @@ def _base() -> str:
 
 
 def _project() -> str:
-    pid = os.environ.get("CI_PROJECT_ID")
+    pid = os.environ.get("GITLAB_PROJECT_ID") or os.environ.get("CI_PROJECT_ID")
     if not pid:
-        raise RuntimeError("CI_PROJECT_ID is not set; are you running on GitLab CI?")
+        raise RuntimeError("GITLAB_PROJECT_ID (or CI_PROJECT_ID) is not set")
     return pid
 
 

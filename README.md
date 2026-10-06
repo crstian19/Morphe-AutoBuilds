@@ -2,8 +2,8 @@
 
 # 🔧 Morphe Non-Root Builder
 
-[![Daily Build](https://img.shields.io/github/actions/workflow/status/RookieEnough/Revanced-AutoBuilds/patch.yml?label=Daily%20Build&style=for-the-badge&color=2ea44f)](https://github.com/RookieEnough/Revanced-AutoBuilds/actions/workflows/patch.yml)
-[![Latest Release](https://img.shields.io/github/v/release/RookieEnough/Revanced-AutoBuilds?style=for-the-badge&label=Latest%20Release&color=0366d6)](https://github.com/RookieEnough/Revanced-AutoBuilds/releases/latest)
+[![Daily Build](https://img.shields.io/github/actions/workflow/status/RookieEnough/Morphe-AutoBuilds/patch.yml?label=Daily%20Build&style=for-the-badge&color=2ea44f)](https://github.com/RookieEnough/Morphe-AutoBuilds/actions/workflows/patch.yml)
+[![Latest Release](https://img.shields.io/badge/Latest%20Release-GitLab-0A0A0A?style=for-the-badge&logo=gitlab)](https://gitlab.com/communitybuilds/Community-builds/-/releases)
 [![Python Version](https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/github/license/RookieEnough/Revanced-AutoBuilds?style=for-the-badge&color=orange)](LICENSE)
 
@@ -19,7 +19,7 @@
 
 
 <p align="center">
-  <strong>Professional, Automated ReVanced APK Builder</strong><br>
+  <strong>Professional, Automated Morphe APK Builder</strong><br>
   Multi-source • Multi-architecture • GitHub Actions Powered
 </p>
 
@@ -27,9 +27,9 @@
 A sophisticated, automated pipeline that builds ready-to-install Morphe applications for <strong>non-rooted Android devices</strong>. This system automatically fetches the latest Morphe tools, downloads base APKs from multiple sources, applies patches, and publishes optimized APKs with architecture-specific builds.
 </p>
 
-[![View Latest Release](https://img.shields.io/badge/View%20Latest%20Release-0A0A0A?style=flat&logo=github&logoColor=white)](https://github.com/RookieEnough/Revanced-AutoBuilds/releases/latest)
-[![Report Bug](https://img.shields.io/badge/Report%20Bug-0A0A0A?style=flat&logo=github&logoColor=white)](https://github.com/RookieEnough/Revanced-AutoBuilds/issues)
-[![Request Feature](https://img.shields.io/badge/Request%20Feature-0A0A0A?style=flat&logo=github&logoColor=white)](https://github.com/RookieEnough/Revanced-AutoBuilds/issues)
+[![View Latest Release](https://img.shields.io/badge/View%20Latest%20Release-0A0A0A?style=flat&logo=gitlab&logoColor=white)](https://gitlab.com/communitybuilds/Community-builds/-/releases)
+[![Report Bug](https://img.shields.io/badge/Report%20Bug-0A0A0A?style=flat&logo=github&logoColor=white)](https://github.com/RookieEnough/Morphe-AutoBuilds/issues)
+[![Request Feature](https://img.shields.io/badge/Request%20Feature-0A0A0A?style=flat&logo=github&logoColor=white)](https://github.com/RookieEnough/Morphe-AutoBuilds/issues)
 
 
 </div>
@@ -44,18 +44,11 @@ A sophisticated, automated pipeline that builds ready-to-install Morphe applicat
 
 | Mirror | Description | Link |
 | :--- | :--- | :--- |
-| **GitHub Releases** | Primary source. Contains all builds. | [**Download Latest Release**](https://RookieEnough/morphe-AutoBuilds/releases/latest) |
+| **GitLab Releases** | Primary source. Contains all builds. | [**Download Latest Release**](https://gitlab.com/communitybuilds/Community-builds/-/releases) |
 
 ### 📱 Supported Apps & Architectures
 
-| Application | arm64-v8a | armeabi-v7a | Universal |
-| :--- | :---: | :---: | :---: |
-| **YouTube** | ✅ | ✅ | ✅ |
-| **YouTube Music** | ✅ | ✅ | ❌ |
-| **Reddit** | ❌ | ❌ | ✅ |
-| **Twitter (X)** | ✅ | ❌ | ❌ |
-| **TikTok** | ❌ | ❌ | ✅ |
-| **Spotify** | ❌ | ❌ | ✅ |
+The full list of supported apps lives in [`patch-config.json`](patch-config.json) (95 apps and growing). Each app can target `arm64-v8a`, `armeabi-v7a`, and/or `universal` builds, configured in [`arch-config.json`](arch-config.json).
 
 *( Legend: ✅ = Available / ❌ = Not configured )*
 
@@ -78,7 +71,7 @@ This repository utilizes a robust Python-based pipeline to ensure high reliabili
 ## 🛠️ Repository Structure
 
 ```text
-revanced-nonroot/
+Morphe-AutoBuilds/
 ├── .github/workflows/      # GitHub Actions automation
 │   ├── patch.yml           # Daily automated builds (06:00 UTC)
 │   └── manual-patch.yml    # Manual trigger workflow
@@ -87,7 +80,7 @@ revanced-nonroot/
 │   ├── apkpure/            # APKPure definitions
 │   └── uptodown/           # UptoDown definitions
 ├── patches/                # Patch inclusion/exclusion rules
-├── sources/                # ReVanced tool source definitions
+├── sources/                # Morphe tool source definitions
 ├── src/                    # Core Python build logic
 ├── arch-config.json        # Architecture build matrix
 ├── patch-config.json       # App build configuration
@@ -187,7 +180,7 @@ If you prefer to build the APKs on your own machine, follow these steps.
 1. **Clone the repository:**
 ```bash
 git clone https://github.com/RookieEnough/morphe-AutoBuilds.git
-cd morphe-nonroot
+cd Morphe-AutoBuilds
 
 ```
 

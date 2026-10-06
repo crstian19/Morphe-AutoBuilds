@@ -612,15 +612,89 @@ def check_apk_integrity(apk_path: Path) -> bool:
         return False
 
 
+def is_apk_signed(apk_path: Path) -> bool:
+    """Return True if the APK carries an Android signature (v1 or v2+).
+
+    Checks for v1 (JAR signing) META-INF/*.RSA|*.DSA|*.EC entries first,
+    then looks for an APK Signing Block containing a v2/v3 signature
+    scheme id. Mirrors occasionally serve unsigned or stripped APKs;
+    the patcher rejects those, so detect them here and let the caller
+    try the next download source instead.
+    """
+    if not apk_path or not apk_path.exists():
+        return False
+    try:
+        with zipfile.ZipFile(apk_path, 'r') as z:
+            names = z.namelist()
+            for n in names:
+                upper = n.upper()
+                if upper.startswith("META-INF/") and (
+                    upper.endswith(".RSA") or upper.endswith(".DSA") or upper.endswith(".EC")
+                ):
+                    return True
+    except Exception:
+        return False
+    # No v1 signature: look for the APK Signing Block (v2/v3/v3.1).
+    try:
+        import struct
+        sig_block_magic = b"APK Sig Block 42"
+        v2_scheme_ids = {0x7109871A, 0xF05368A0, 0x1B93AD61}  # v2, v3, v3.1
+        with open(apk_path, "rb") as f:
+            f.seek(0, 2)
+            file_size = f.tell()
+            # EOCD is at the very end; central directory offset lives at +16.
+            tail = min(file_size, 65558)
+            f.seek(file_size - tail)
+            buf = f.read(tail)
+            eocd_pos = buf.rfind(b"PK\x05\x06")
+            if eocd_pos < 0:
+                return False
+            cd_offset = struct.unpack("<I", buf[eocd_pos + 16:eocd_pos + 20])[0]
+            if cd_offset < 32 or cd_offset > file_size:
+                return False
+            f.seek(cd_offset - 24)
+            header = f.read(24)
+            if len(header) < 24 or header[8:] != sig_block_magic:
+                return False
+            block_size = struct.unpack("<Q", header[:8])[0]
+            f.seek(cd_offset - 24 - block_size + 8)
+            remaining = block_size - 8
+            while remaining >= 12:
+                pair = f.read(12)
+                if len(pair) < 12:
+                    break
+                pair_size, pair_id = struct.unpack("<QI", pair[:12])
+                if pair_id in v2_scheme_ids:
+                    return True
+                skip = pair_size - 4
+                if skip < 0:
+                    break
+                f.seek(skip, 1)
+                remaining -= 12 + skip
+    except Exception:
+        pass
+    return False
+
+
 def ensure_usable_apk(apk_path: Path, app_name: str, version: str) -> Path | None:
-    """Return ``apk_path`` if it passes the integrity check.
+    """Return ``apk_path`` if it passes integrity and signature checks.
 
     Otherwise attempt a ``zip -FF`` repair and re-check.  A file that is
-    still corrupt afterwards is deleted and ``None`` is returned so the
-    caller can try another download source instead of feeding a broken
-    APK to the patcher (which crashes with an obscure NPE).
+    still corrupt afterwards, or that carries no Android signature, is
+    deleted and ``None`` is returned so the caller can try another
+    download source instead of feeding a broken APK to the patcher
+    (which crashes with an obscure NPE or rejects unsigned input).
     """
-    if check_apk_integrity(apk_path):
+    def _good(path: Path) -> bool:
+        if not check_apk_integrity(path):
+            return False
+        if not is_apk_signed(path):
+            logging.warning(
+                f"APK {path.name} has no Android signature; discarding download")
+            return False
+        return True
+
+    if _good(apk_path):
         return apk_path
 
     logging.warning(f"APK integrity check failed for {apk_path.name}; attempting repair with zip -FF")
@@ -649,10 +723,10 @@ def ensure_usable_apk(apk_path: Path, app_name: str, version: str) -> Path | Non
 
     apk_path.unlink(missing_ok=True)
     fixed_apk.rename(apk_path)
-    if check_apk_integrity(apk_path):
-        logging.info("APK repaired successfully and passes integrity check")
+    if _good(apk_path):
+        logging.info("APK repaired successfully and passes integrity and signature checks")
         return apk_path
 
-    logging.warning("APK still fails integrity check after zip -FF repair; discarding download")
+    logging.warning("APK still fails checks after zip -FF repair; discarding download")
     apk_path.unlink(missing_ok=True)
     return None
