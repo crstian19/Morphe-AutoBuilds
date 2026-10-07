@@ -657,8 +657,8 @@ def is_apk_signed(apk_path: Path) -> bool:
             if len(header) < 24 or header[8:] != sig_block_magic:
                 return False
             block_size = struct.unpack("<Q", header[:8])[0]
-            f.seek(cd_offset - 24 - block_size + 8)
-            remaining = block_size - 8
+            f.seek(cd_offset - block_size)
+            remaining = block_size - 24
             while remaining >= 12:
                 pair = f.read(12)
                 if len(pair) < 12:

@@ -263,9 +263,10 @@ def run_build(app_name: str, source: str, arch: str = "universal") -> str:
 
         # Validate APK integrity (safety net: downloads were already validated,
         # but bundle merging / arch stripping can corrupt the file).
+        # Note: Only check integrity here, NOT signature. Merged bundles are
+        # unsigned (APKEditor doesn't sign); the APK gets signed after patching.
         logging.info("Checking APK integrity...")
-        input_apk = utils.ensure_usable_apk(input_apk, app_name, version or "")
-        if input_apk is None:
+        if not utils.check_apk_integrity(input_apk):
             logging.error(f"APK for {app_name} v{version} is corrupt and could not be repaired; trying next version")
             continue
 
@@ -387,6 +388,9 @@ def main():
         print(f"\n🎯 Built {len(built_apks)} APK(s) for {app_name}:")
         for apk in built_apks:
             print(f"  📱 {Path(apk).name}")
+        if not built_apks:
+            logging.error(f"❌ No APKs built for {app_name}; failing the job.")
+            exit(1)
         
     else:
         # Fallback to single universal build
@@ -394,6 +398,9 @@ def main():
         apk_path = run_build(app_name, source, "universal")
         if apk_path:
             print(f"🎯 Final APK path: {apk_path}")
+        else:
+            logging.error(f"❌ No APK built for {app_name}; failing the job.")
+            exit(1)
 
 if __name__ == "__main__":
     main()

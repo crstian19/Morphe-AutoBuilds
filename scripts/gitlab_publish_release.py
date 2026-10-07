@@ -79,6 +79,33 @@ def main() -> int:
         return 0
 
     # 1. Upload everything first (never delete before the new files are up).
+    # GitLab rejects some filename characters (e.g. parentheses -> HTTP 400
+    # "file_name is invalid"). Rename on disk first so build records,
+    # manifest.json, asset links and package files all agree on the name.
+    renames: dict[str, str] = {}
+    for apk in apks:
+        safe = gitlab_api.safe_filename(apk.name)
+        if safe != apk.name:
+            target = apk.with_name(safe)
+            if target.exists():
+                target.unlink()
+            apk.rename(target)
+            renames[apk.name] = safe
+            logging.info(f"Renamed {apk.name} -> {safe} for GitLab")
+            apk = target
+    if renames and manifest.exists():
+        try:
+            import json as _json
+            data = _json.loads(manifest.read_text(encoding="utf-8"))
+            for entry in data.get("entries", {}).values():
+                if entry.get("apk", "") in renames:
+                    entry["apk"] = renames[entry["apk"]]
+            manifest.write_text(_json.dumps(data, indent=2), encoding="utf-8")
+            logging.info(f"Patched manifest.json for {len(renames)} renamed files")
+        except Exception as e:
+            logging.warning(f"Could not patch manifest.json filenames: {e}")
+    apks = sorted(apks_dir.glob("*.apk"))
+
     urls: dict[str, str] = {}
     for apk in apks:
         urls[apk.name] = gitlab_api.upload_package_file(apk)

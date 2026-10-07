@@ -90,6 +90,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_FULL_REBUILD: ${{ inputs.force_full_rebuild || 'false' }}
+          # Release state now lives on GitLab: the planner reads manifest.json
+          # and the APK list from the GitLab release instead of GitHub's.
+          MORPHE_PLATFORM: gitlab
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_PROJECT_ID: "87288318"
         run: |
           python scripts/check_app_updates.py
 
@@ -139,10 +144,10 @@ jobs:
     needs: patch-apps
     runs-on: ubuntu-latest
     services:
-      trawl:
-        image: ghcr.io/germondai/trawl:latest
+      flaresolverr:
+        image: ghcr.io/flaresolverr/flaresolverr:latest
         ports:
-          - 8191:8191
+          - 8192:8191
         options: --shm-size=1gb
     permissions:
       contents: write
@@ -177,13 +182,25 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      - name: Wait for FlareSolverr
+        run: |
+          echo "Waiting for FlareSolverr to be ready..."
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:8192/ > /dev/null 2>&1; then
+              echo "FlareSolverr is ready."
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 5
+          done
+
       - name: Build APK
         env:
           APP_NAME: ${{ matrix.app_name }}
           SOURCE: ${{ matrix.source }}
           ARCH: ${{ matrix.arch }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TRAWL_URL: http://localhost:8191
+          FLARESOLVERR_URL: http://localhost:8192/v1
         run: |
           echo "Building ${{ matrix.app_name }} with ${{ matrix.source }}..."
           sleep $((RANDOM % 30)).$((RANDOM % 100))
@@ -332,16 +349,11 @@ jobs:
             --apks-dir ./release-apks \
             --merge
 
-      - name: Display Release URL
+      - name: Publish Summary
         if: steps.check-apks.outputs.skip_release == 'false'
         run: |
-          echo "Release URL: https://gitlab.com/communitybuilds/Community-builds/-/releases"
-          echo ""
-          echo "Direct Download Links:"
-          for apk in ./release-apks/*.apk; do
-            filename=$(basename "$apk")
-            echo "- $filename: https://gitlab.com/api/v4/projects/87288318/packages/generic/morphe-apks/latest/$filename"
-          done
+          count=$(ls -1 ./release-apks/*.apk 2>/dev/null | wc -l)
+          echo "Published $count APK(s) plus manifest to the release."
 
   cleanup:
     name: Cleanup Workflow Runs

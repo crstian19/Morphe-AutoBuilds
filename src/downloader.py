@@ -11,6 +11,7 @@ from src import (
     apkmirror,
     github,
     apkcombo,
+    codeberg,
 )
 
 

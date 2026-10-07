@@ -14,7 +14,7 @@ from urllib.parse import urljoin
 import requests as plain_requests
 from bs4 import BeautifulSoup
 
-from src import session, utils
+from src import session, flaresolverr, utils
 
 
 LOCALES = ("en", "de", "fr", "in", "it", "ru", "jp", "kr")
@@ -34,11 +34,21 @@ def _is_app_page(response) -> bool:
 
 
 def _get(url: str):
-    """Use curl-cffi first, then standard requests if that edge rejects it."""
+    """Use curl-cffi first, then FlareSolverr for Cloudflare bypass, then plain requests."""
     try:
         response = session.get(url, headers=HEADERS, timeout=15)
         if _is_app_page(response) or response.status_code == 200 and "/apps/" in url:
             return response
+        # Check for Cloudflare challenge - use FlareSolverr
+        try:
+            text = response.text[:5000] if hasattr(response, 'text') else ""
+        except:
+            text = ""
+        if flaresolverr._is_cloudflare_challenge(response.status_code, text):
+            logging.info(f"Uptodown Cloudflare challenge for {url}, trying FlareSolverr")
+            fs_resp = flaresolverr.get_with_bypass(url, session=None, headers=HEADERS, timeout=30)
+            if fs_resp:
+                return fs_resp
         status = response.status_code
     except Exception as exc:
         status = type(exc).__name__
@@ -125,17 +135,13 @@ def _xapk_url_via_trawl(page_url: str) -> str | None:
 
     Uptodown serves some versions (e.g. Facebook 580.0.0.51.74) as XAPK-only.
     The download button is a <button> without a data-url; the actual URL is
-    resolved by JavaScript. Use the CI trawl service to render the page and
-    capture the resulting download link.
+    resolved by JavaScript. Use FlareSolverr to render the page and capture
+    the resulting download link.
     """
-    try:
-        from src import trawl
-    except ImportError:
+    result = flaresolverr.solve(page_url, timeout=45)
+    if not result or not result.get("html"):
         return None
-    rendered = trawl.fetch(page_url)
-    if not rendered:
-        return None
-    soup = BeautifulSoup(rendered.content, "html.parser")
+    soup = BeautifulSoup(result["html"], "html.parser")
     # After JS runs, the button may gain an href/data-url, or the page may
     # contain a direct dw.uptodown.com link.
     link = _direct_url_from_page(soup, page_url)
@@ -143,7 +149,7 @@ def _xapk_url_via_trawl(page_url: str) -> str | None:
         logging.info("Uptodown XAPK download URL obtained via browser rendering")
         return link
     # Fallback: search rendered HTML for dw.uptodown.com URLs
-    for match in re.finditer(r'https://dw\.uptodown\.com/dwn/[A-Za-z0-9_\-/]+', rendered.text):
+    for match in re.finditer(r'https://dw\.uptodown\.com/dwn/[A-Za-z0-9_\-/]+', result["html"]):
         url = match.group(0)
         logging.info("Uptodown XAPK download URL found in rendered page")
         return url
