@@ -136,6 +136,24 @@ def main() -> int:
         gitlab_api.ensure_release(args.tag, title, notes, ref)
         gitlab_api.replace_asset_links(args.tag, [(n, u) for n, u in urls.items()])
         keep = set(urls)
+    # Clean up superseded APKs from the package registry.
+    # The asset-links API is unreliable, so we list package files directly.
+    # For each app prefix, keep only the files in 'keep' (current versions).
+    try:
+        all_files = gitlab_api.list_package_files()
+        for f in all_files:
+            name = f.get("file_name", "")
+            if not name.endswith(".apk") or name in keep:
+                continue
+            prefix = identity_prefix(name)
+            if not prefix:
+                continue
+            if any(k != name and k.startswith(prefix) for k in keep):
+                logging.info(f"Deleting superseded package file: {name}")
+                gitlab_api.delete_package_file(name)
+    except Exception as e:
+        logging.warning(f"Package cleanup failed: {e}")
+    # Also clean up stale asset links if any exist
     for link in gitlab_api.list_asset_links(args.tag):
         name = link.get("name", "")
         if not name.endswith(".apk") or name in keep:
@@ -144,9 +162,8 @@ def main() -> int:
         if not prefix:
             continue
         if any(k != name and (k.startswith(prefix)) for k in keep):
-            logging.info(f"Deleting superseded asset: {name}")
+            logging.info(f"Deleting superseded asset link: {name}")
             gitlab_api.delete_asset_link(args.tag, link["id"])
-            gitlab_api.delete_package_file(name)
 
     if args.merge:
         # Refresh release notes from the final asset set: merge mode otherwise

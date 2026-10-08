@@ -121,6 +121,31 @@ def upload_package_file(apk_path: str | Path,
     return url
 
 
+def list_package_files() -> List[Dict[str, Any]]:
+    """List all files in the morphe-apks generic package."""
+    files: List[Dict[str, Any]] = []
+    page = 1
+    while True:
+        r = api("GET", f"/packages/{_package_id()}/package_files?per_page=100&page={page}")
+        r.raise_for_status()
+        batch = r.json()
+        files.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    return files
+
+
+def _package_id() -> int:
+    """Get the package ID for morphe-apks."""
+    r = api("GET", "/packages?package_name=morphe-apks&per_page=1")
+    r.raise_for_status()
+    pkgs = r.json()
+    if pkgs:
+        return pkgs[0]["id"]
+    raise RuntimeError("morphe-apks package not found")
+
+
 def delete_package_file(filename: str,
                         package: str = PACKAGE_NAME,
                         version: str = PACKAGE_VERSION) -> bool:
@@ -183,13 +208,26 @@ def ensure_release(tag: str, name: str, description: str, ref: str) -> Dict[str,
 
 
 def list_asset_links(tag: str) -> List[Dict[str, Any]]:
-    # Paginate: the API defaults to 20 links per page and we have 100+.
-    links: List[Dict[str, Any]] = []
+    # The /releases/{tag}/assets/links endpoint is broken (returns []).
+    # Get links from the release object instead, which includes them.
+    try:
+        r = api("GET", f"/releases/{tag}")
+        if r.status_code == 404:
+            return []
+        r.raise_for_status()
+        release = r.json()
+        links = release.get("assets", {}).get("links", [])
+        if links:
+            return links
+    except Exception:
+        pass
+    # Fallback to the direct endpoint
+    links = []
     page = 1
     while True:
         r = api("GET", f"/releases/{tag}/assets/links?per_page=100&page={page}")
         if r.status_code == 404:
-            return []
+            return links
         r.raise_for_status()
         batch = r.json()
         links.extend(batch)

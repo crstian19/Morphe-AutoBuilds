@@ -258,6 +258,12 @@ def get_download_link(version: str, app_name: str, config: dict) -> str | None:
     return None
 
 
+# Apps whose Uptodown slug differs from the config name/package guesses.
+_SLUG_OVERRIDES = {
+    "com.google.android.inputmethod.latin": ["gboard-go"],
+}
+
+
 def generate_possible_uptodown_names(config: dict) -> list[str]:
     """Return deterministic candidates, with the configured slug first."""
     app_name = (config.get("slug") or config.get("name") or "").strip().lower()
@@ -269,6 +275,8 @@ def generate_possible_uptodown_names(config: dict) -> list[str]:
         if len(value) > 1 and value not in candidates:
             candidates.append(value)
 
+    for override in _SLUG_OVERRIDES.get(package, []):
+        add(override)
     add(app_name)
     add(app_name.replace("-", ""))
     add(app_name.replace("-plus", "plus"))
