@@ -62,15 +62,66 @@ def build_release_notes(asset_names: list[str]) -> tuple[str, str]:
     return f"Morphe APKs - {now}", "\n".join(lines)
 
 
+def rebuild_all_links(tag: str) -> int:
+    """Recovery: ensure every APK in the package registry has a release asset link."""
+    ref = os.environ.get("CI_COMMIT_SHA", "main")
+    logging.info(f"Rebuilding asset links for release '{tag}' from package files...")
+
+    pkg_files = gitlab_api.list_package_files()
+    apk_files = [f for f in pkg_files if f.get("file_name", "").endswith(".apk")]
+    logging.info(f"Found {len(apk_files)} APKs in package registry")
+
+    # IMPORTANT: ensure_release() calls move_tag() which deletes/recreates the
+    # tag. In GitLab, this wipes the release's asset links. So we must ensure
+    # the release FIRST, then (re)create all links. Do NOT rely on a pre-wipe
+    # listing of existing links.
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    gitlab_api.ensure_release(tag, f"Morphe APKs - {now}", "", ref)
+
+    # After the tag move, existing links are gone. Create fresh for all APKs.
+    # Use a set to deduplicate filenames in the package registry.
+    seen = set()
+    created = 0
+    skipped = 0
+    for pf in apk_files:
+        name = pf["file_name"]
+        if name in seen:
+            skipped += 1
+            continue
+        seen.add(name)
+        url = gitlab_api.package_file_url(name)
+        try:
+            r = gitlab_api.api("POST", f"/releases/{tag}/assets/links",
+                                json={"name": name, "url": url, "link_type": "package"})
+            r.raise_for_status()
+        except Exception as e:
+            logging.warning(f"Could not create link for {name}: {e}")
+            continue
+        created += 1
+        if created % 20 == 0:
+            logging.info(f"Created {created} links so far...")
+
+    logging.info(f"Rebuild complete: {created} links created, {skipped} duplicates skipped.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--apks-dir", required=True)
+    ap.add_argument("--apks-dir", required=False, default=None)
     ap.add_argument("--tag", default="latest")
     ap.add_argument("--merge", action="store_true",
                     help="Add/replace only these assets, keep existing links "
                          "(for single-app manual builds). Default replaces all.")
+    ap.add_argument("--rebuild-links", action="store_true",
+                    help="Recovery mode: rebuild all release asset links from "
+                         "package files. Ignores --apks-dir.")
     args = ap.parse_args()
 
+    if args.rebuild_links:
+        return rebuild_all_links(args.tag)
+
+    if not args.apks_dir:
+        ap.error("--apks-dir is required unless --rebuild-links is used")
     apks_dir = Path(args.apks_dir)
     apks = sorted(apks_dir.glob("*.apk"))
     manifest = apks_dir / "manifest.json"
@@ -124,13 +175,41 @@ def main() -> int:
             title, notes = build_release_notes(list(urls))
         existing = {l["name"]: l for l in gitlab_api.list_asset_links(args.tag)}
         gitlab_api.ensure_release(args.tag, title, notes, ref)
+        # NOTE: ensure_release() calls move_tag() which deletes/recreates the tag.
+        # In GitLab, this wipes the release's asset links. Recreate links for
+        # all previously-existing apps (from package files) plus new uploads.
+        _restored = 0
+        for old_name in sorted(existing.keys()):
+            if old_name in urls:
+                continue  # Will be (re)created below as fresh upload
+            if not old_name.endswith(".apk"):
+                continue
+            url = gitlab_api.package_file_url(old_name)
+            try:
+                r = gitlab_api.api("POST", f"/releases/{args.tag}/assets/links",
+                                    json={"name": old_name, "url": url, "link_type": "package"})
+                if r.status_code in (200, 201):
+                    _restored += 1
+            except Exception:
+                pass
+        if _restored:
+            logging.info(f"Restored {_restored} asset links wiped by tag move")
         for name, url in urls.items():
-            if name in existing:
-                gitlab_api.delete_asset_link(args.tag, existing[name]["id"])
+            # Old link was wiped by move_tag; just create the new one
             r = gitlab_api.api("POST", f"/releases/{args.tag}/assets/links",
                                json={"name": name, "url": url, "link_type": "package"})
             r.raise_for_status()
-        keep = set(urls) | (set(existing) - set(urls))
+        # Build keep set from package files (reliable source of truth).
+        # The asset-links API can return stale/empty data due to consistency
+        # lag; never let a flaky listing cause mass deletion of good links.
+        try:
+            _pkg_files = gitlab_api.list_package_files()
+            _pkg_apks = {f.get("file_name", "") for f in _pkg_files
+                         if f.get("file_name", "").endswith(".apk")}
+        except Exception as e:
+            logging.warning(f"Could not list package files for keep-set: {e}")
+            _pkg_apks = set()
+        keep = set(urls) | _pkg_apks | (set(existing) - set(urls))
     else:
         title, notes = build_release_notes(list(urls))
         gitlab_api.ensure_release(args.tag, title, notes, ref)
@@ -154,7 +233,9 @@ def main() -> int:
     except Exception as e:
         logging.warning(f"Package cleanup failed: {e}")
     # Also clean up stale asset links if any exist
-    for link in gitlab_api.list_asset_links(args.tag):
+    all_links = gitlab_api.list_asset_links(args.tag)
+    to_delete = []
+    for link in all_links:
         name = link.get("name", "")
         if not name.endswith(".apk") or name in keep:
             continue
@@ -162,8 +243,16 @@ def main() -> int:
         if not prefix:
             continue
         if any(k != name and (k.startswith(prefix)) for k in keep):
-            logging.info(f"Deleting superseded asset link: {name}")
-            gitlab_api.delete_asset_link(args.tag, link["id"])
+            to_delete.append(link)
+    # Safety guard: refuse mass deletion (likely API inconsistency, not staleness)
+    if all_links and len(to_delete) > len(all_links) * 0.3:
+        raise RuntimeError(
+            f"Refusing to delete {len(to_delete)}/{len(all_links)} asset links "
+            f"(>30%). This likely indicates GitLab API inconsistency. Aborting."
+        )
+    for link in to_delete:
+        logging.info(f"Deleting superseded asset link: {link.get('name')}")
+        gitlab_api.delete_asset_link(args.tag, link["id"])
 
     if args.merge:
         # Refresh release notes from the final asset set: merge mode otherwise
@@ -171,7 +260,13 @@ def main() -> int:
         final_names = [l["name"] for l in gitlab_api.list_asset_links(args.tag)]
         if final_names:
             mtitle, mnotes = build_release_notes(final_names)
-            gitlab_api.ensure_release(args.tag, mtitle, mnotes, ref)
+            # Do NOT call ensure_release() here: it calls move_tag(), which
+            # deletes/recreates the tag and wipes all release asset links in
+            # GitLab. Update the notes directly so the tag stays untouched.
+            r = gitlab_api.api("PUT", f"/releases/{args.tag}",
+                               json={"name": mtitle, "description": mnotes})
+            r.raise_for_status()
+            logging.info("Refreshed release notes (tag untouched)")
 
     logging.info("GitLab release publish complete.")
     return 0
