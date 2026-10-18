@@ -6,6 +6,7 @@ from sys import exit
 from pathlib import Path
 from os import getenv
 import subprocess
+import shutil
 from src import (
     r2,
     utils,
@@ -155,11 +156,6 @@ def run_build(app_name: str, source: str, arch: str = "universal") -> str:
         downloader.download_codeberg,
         downloader.download_apkcombo,
     ]
-
-    # Facebook: Codeberg only. No mirror fallbacks, fail if Codeberg fails.
-    if app_name == "facebook":
-        download_methods = [downloader.download_codeberg]
-        logging.info("Facebook: using Codeberg only (no mirror fallbacks)")
 
     input_apk = None
     version = None
@@ -378,6 +374,14 @@ def run_build(app_name: str, source: str, arch: str = "universal") -> str:
         apksigner = utils.find_apksigner()
         if not apksigner:
             raise RuntimeError("apksigner not found")
+
+        if app_name in ("tiktok", "twitter", "x-new"):
+            from src.play_updates import disable_play_store_updates
+            disable_play_store_updates(output_apk)
+            zipalign = shutil.which("zipalign") or str(Path(apksigner).with_name("zipalign"))
+            aligned_apk = output_apk.with_suffix(".aligned.apk")
+            utils.run_process([zipalign, "-f", "-P", "16", "4", str(output_apk), str(aligned_apk)])
+            aligned_apk.replace(output_apk)
 
         try:
             utils.run_process([
